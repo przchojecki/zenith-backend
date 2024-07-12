@@ -6,10 +6,6 @@ import { Expose } from 'class-transformer';
 class Config {
   @Expose()
   @IsString()
-  MONGO_URI: string;
-
-  @Expose()
-  @IsString()
   FRONTEND_URL: string;
 
   @Expose()
