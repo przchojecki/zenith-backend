@@ -10,6 +10,10 @@ class Config {
 
   @Expose()
   @IsString()
+  MONGODB_URI: string;
+
+  @Expose()
+  @IsString()
   BACKEND_URL: string;
 
   @Expose()
