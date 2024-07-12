@@ -13,7 +13,7 @@ import { RefreshTokenSchema } from './auth/schemas/refresh-token.schema';
 @Module({
   imports: [
     ConfigModule.forRoot({ load: [config], isGlobal: true }),
-    MongooseModule.forRoot(process.env.MONGO_URI),
+    MongooseModule.forRoot(process.env.MONGODB_URI),
     MongooseModule.forFeature([
       { name: 'User', schema: UserSchema },
       { name: 'Vendor', schema: VendorSchema },
