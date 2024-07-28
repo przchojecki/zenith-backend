@@ -4,6 +4,8 @@ import { Vendor, VendorDocument } from './schemas/vendor.schema';
 import { Model } from 'mongoose';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { VendorDto } from './types/vendor';
+import { plainToInstance } from 'class-transformer';
+import { ResponseVendorDto } from './dto/response-vendor.dto';
 
 @Injectable()
 export class VendorService {
@@ -20,24 +22,27 @@ export class VendorService {
     return vendors;
   }
 
-  async createVendor(createDto: CreateVendorDto) {
+  async createVendor(createDto: CreateVendorDto): Promise<ResponseVendorDto> {
     const vendor = await this.vendorModel.create(createDto);
 
-    if (!vendor) {
-      throw new Error('Failed to create a vendor');
-    }
-
-    return vendor;
+    return plainToInstance(ResponseVendorDto, vendor);
   }
 
-  async createManyVendors(createDto: CreateVendorDto[]) {
+  async createManyVendors(
+    createDto: CreateVendorDto[],
+  ): Promise<ResponseVendorDto[]> {
+    const vendors = [];
     createDto.map(async (dto) => {
       const vendor = await this.vendorModel.create(dto);
 
       if (!vendor) {
         throw new Error('Fail');
       }
+
+      vendors.push(vendor);
     });
+
+    return plainToInstance(ResponseVendorDto, vendors);
   }
 
   async getVendorsBySearchQuery(query: string, field: string) {
@@ -115,12 +120,18 @@ export class VendorService {
     vendorsFilter: { filter: string; value: string | string[] },
     order: 'asc' | 'desc' = 'asc',
   ) {
-    if (!vendorsFilter.filter)
+    if (!vendorsFilter.filter) {
+      console.log(
+        await this.vendorModel
+          .find()
+          .sort({ [field]: order })
+          .exec(),
+      );
       return await this.vendorModel
         .find()
         .sort({ [field]: order })
         .exec();
-
+    }
     let filter = {};
 
     if (!Array.isArray(vendorsFilter.value))
@@ -141,6 +152,12 @@ export class VendorService {
           },
         },
       };
+    console.log(
+      await this.vendorModel
+        .find(filter)
+        .sort({ [field]: order })
+        .exec(),
+    );
     return await this.vendorModel
       .find(filter)
       .sort({ [field]: order })
