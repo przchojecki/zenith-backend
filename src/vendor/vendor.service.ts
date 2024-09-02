@@ -1,31 +1,29 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Vendor, VendorDocument } from './schemas/vendor.schema';
-import { Model } from 'mongoose';
+import { Model, PipelineStage } from 'mongoose';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { VendorDto } from './types/vendor';
 import { plainToInstance } from 'class-transformer';
 import { ResponseVendorDto } from './dto/response-vendor.dto';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 
 @Injectable()
 export class VendorService {
   constructor(
     @InjectModel(Vendor.name) private vendorModel: Model<VendorDocument>,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
-  async getVendors() {
-    const vendors = await this.vendorModel.find();
-
-    if (!vendors) {
-      throw new Error('No vendors found');
-    }
-
-    return vendors;
-  }
 
   async createVendor(createDto: CreateVendorDto): Promise<ResponseVendorDto> {
-    const vendor = await this.vendorModel.create(createDto);
-
-    return plainToInstance(ResponseVendorDto, vendor);
+    try {
+      const vendor = await this.vendorModel.create(createDto);
+      return plainToInstance(ResponseVendorDto, vendor);
+    } catch (err) {
+      console.log(createDto.name);
+      console.log(err);
+    }
   }
 
   async createManyVendors(
@@ -45,21 +43,9 @@ export class VendorService {
     return plainToInstance(ResponseVendorDto, vendors);
   }
 
-  async getVendorsBySearchQuery(query: string, field: string) {
-    try {
-      const vendors = await this.vendorModel.find({
-        [field]: new RegExp(query, 'i'),
-      });
-
-      return vendors;
-    } catch (err) {
-      console.log('Error');
-    }
-  }
-
   async getVendorsByMultipleOptions(queryOptions: string[], field: string) {
     try {
-      if (field === 'location') {
+      if (field === 'primaryTask') {
         const vendors = await this.vendorModel.find({
           [field]: {
             $in: queryOptions.map((option) => new RegExp(option, 'i')),
@@ -83,34 +69,91 @@ export class VendorService {
     }
   }
 
+  async getVendorsCount(vendorsFilter: {
+    filter: string;
+    value: string | string[];
+  }): Promise<number> {
+    try {
+      const { filter: field, value } = vendorsFilter;
+
+      if (!field) {
+        return await this.vendorModel.countDocuments();
+      }
+
+      const filter: any = {};
+
+      if (field) {
+        if (!Array.isArray(value)) {
+          filter[field] = {
+            $regex: new RegExp(value, 'i'),
+          };
+        } else if (field === 'primaryTask') {
+          filter[field] = {
+            $in: value.map((option) => new RegExp(option, 'i')),
+          };
+        } else {
+          filter[field] = {
+            $elemMatch: {
+              $in: value.map((option) => new RegExp(option, 'i')),
+            },
+          };
+        }
+      }
+
+      const count = await this.vendorModel.countDocuments(filter);
+      return count;
+    } catch (err) {
+      console.log('Error', err);
+      return 0;
+    }
+  }
+
   async getAllHints() {
     try {
-      const vendors = await this.vendorModel.find();
-      const locations: string[] = [];
-      const useCases: string[] = [];
-      const industries: string[] = [];
-      const categories: string[] = [];
+      const cachedHints = await this.cacheManager.get('hints');
+      if (cachedHints) {
+        return cachedHints;
+      }
 
-      vendors.map((vendor) => {
-        locations.push(vendor.location);
+      const aggregatePipeline = [
+        {
+          $facet: {
+            uniquePrimaryTasks: [
+              {
+                $group: {
+                  _id: null,
+                  uniquePrimaryTasks: { $addToSet: '$primaryTask' },
+                },
+              },
+              { $project: { _id: 0, uniquePrimaryTasks: 1 } },
+            ],
+            uniqueApplicableTasks: [
+              { $unwind: '$applicableTasks' },
+              {
+                $group: {
+                  _id: null,
+                  uniqueApplicableTasks: { $addToSet: '$applicableTasks' },
+                },
+              },
+              { $project: { _id: 0, uniqueApplicableTasks: 1 } },
+            ],
+          },
+        },
+      ];
 
-        vendor.useCase.map((useCase) => useCases.push(useCase));
-        vendor.industry.map((industry) => industries.push(industry));
-        vendor.category.map((category) => categories.push(category));
-      });
+      const hints = await this.vendorModel.aggregate(aggregatePipeline);
 
-      const uniqueLocations = Array.from(new Set(locations));
-      const uniqueUseCases = Array.from(new Set(useCases));
-      const uniqueIndustries = Array.from(new Set(industries));
-      const uniqueCategories = Array.from(new Set(categories));
-
-      return {
-        locations: uniqueLocations,
-        useCases: uniqueUseCases,
-        industries: uniqueIndustries,
-        categories: uniqueCategories,
+      const result = {
+        primaryTasks: hints[0].uniquePrimaryTasks[0].uniquePrimaryTasks,
+        applicableTasks:
+          hints[0].uniqueApplicableTasks[0].uniqueApplicableTasks,
       };
+
+      await this.cacheManager.set('hints', result);
+
+      return result;
     } catch (err) {
+      console.log(err);
       throw new Error('Couldn`t fetch hints');
     }
   }
@@ -118,49 +161,112 @@ export class VendorService {
   async sortVendors(
     field: keyof VendorDto,
     vendorsFilter: { filter: string; value: string | string[] },
+    vendorsPerPage: number,
+    page: number,
     order: 'asc' | 'desc' = 'asc',
   ) {
-    if (!vendorsFilter.filter) {
-      console.log(
-        await this.vendorModel
-          .find()
-          .sort({ [field]: order })
-          .exec(),
-      );
-      return await this.vendorModel
-        .find()
-        .sort({ [field]: order })
-        .exec();
-    }
-    let filter = {};
+    try {
+      const sortOrder = order === 'asc' ? 1 : -1;
+      const filter: any = {};
 
-    if (!Array.isArray(vendorsFilter.value))
-      filter = {
-        [vendorsFilter.filter]: { $in: new RegExp(vendorsFilter.value, 'i') },
-      };
-    else if (vendorsFilter.filter === 'location')
-      filter = {
-        [vendorsFilter.filter]: {
-          $in: vendorsFilter.value.map((option) => new RegExp(option, 'i')),
-        },
-      };
-    else
-      filter = {
-        [vendorsFilter.filter]: {
-          $elemMatch: {
+      if (vendorsFilter.filter) {
+        if (!Array.isArray(vendorsFilter.value)) {
+          filter[vendorsFilter.filter] = {
+            $regex: new RegExp(vendorsFilter.value, 'i'),
+          };
+        } else if (vendorsFilter.filter === 'primaryTask') {
+          filter[vendorsFilter.filter] = {
             $in: vendorsFilter.value.map((option) => new RegExp(option, 'i')),
+          };
+        } else {
+          filter[vendorsFilter.filter] = {
+            $elemMatch: {
+              $in: vendorsFilter.value.map((option) => new RegExp(option, 'i')),
+            },
+          };
+        }
+      }
+
+      const arrayFields: Array<keyof VendorDocument> = [
+        'applicableTasks',
+        'pros',
+        'cons',
+      ];
+
+      let sortStage;
+      if (arrayFields.includes(field)) {
+        sortStage = {
+          $sort: {
+            [`${field}.0`]: sortOrder,
           },
-        },
-      };
-    console.log(
-      await this.vendorModel
-        .find(filter)
-        .sort({ [field]: order })
-        .exec(),
-    );
-    return await this.vendorModel
-      .find(filter)
-      .sort({ [field]: order })
-      .exec();
+        };
+      } else {
+        sortStage = {
+          $sort: {
+            [field]: sortOrder,
+          },
+        };
+      }
+
+      const pipeline: PipelineStage[] = [
+        ...(Object.keys(filter).length > 0 ? [{ $match: filter }] : []),
+        sortStage,
+        { $skip: (page - 1) * vendorsPerPage },
+        { $limit: vendorsPerPage },
+      ];
+
+      return await this.vendorModel.aggregate(pipeline).exec();
+    } catch (err) {
+      console.error('Sorting error', err);
+      throw err;
+    }
+  }
+
+  async getVendorsByPage(
+    page: number,
+    vendorsPerPage: number,
+    vendorsFilter: { filter: string; value: string | string[] },
+  ) {
+    try {
+      let vendors;
+
+      const { filter: field, value } = vendorsFilter;
+
+      const filter: any = {};
+
+      if (field) {
+        if (!Array.isArray(value)) {
+          filter[field] = {
+            $regex: new RegExp(value, 'i'),
+          };
+        } else if (field === 'primaryTask') {
+          filter[field] = {
+            $in: value.map((option) => new RegExp(option, 'i')),
+          };
+        } else {
+          filter[field] = {
+            $elemMatch: {
+              $in: value.map((option) => new RegExp(option, 'i')),
+            },
+          };
+        }
+      }
+
+      if (!field) {
+        vendors = await this.vendorModel
+          .find()
+          .skip((page - 1) * vendorsPerPage)
+          .limit(vendorsPerPage);
+      } else {
+        vendors = await this.vendorModel
+          .find(filter)
+          .skip((page - 1) * vendorsPerPage)
+          .limit(vendorsPerPage);
+      }
+
+      return vendors;
+    } catch (err) {
+      console.log('Error', err);
+    }
   }
 }

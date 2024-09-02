@@ -7,14 +7,32 @@ import { VendorDto } from './types/vendor';
 export class VendorController {
   constructor(private readonly vendorService: VendorService) {}
 
-  @Get('all')
-  async getVendors() {
-    return await this.vendorService.getVendors();
-  }
-
   @Post('')
   async createVendor(@Body() createDto: CreateVendorDto) {
     return await this.vendorService.createVendor(createDto);
+  }
+
+  @Get('amount')
+  async getVendorsAmount(
+    @Query() query: { filter: keyof VendorDto; value: string },
+  ) {
+    return await this.vendorService.getVendorsCount(query);
+  }
+
+  @Post('by-page')
+  async getVendorsByPage(
+    @Body()
+    data: {
+      page: number;
+      vendorsPerPage: number;
+      vendorsFilter: { filter: keyof VendorDto; value: string };
+    },
+  ) {
+    return await this.vendorService.getVendorsByPage(
+      data.page,
+      data.vendorsPerPage,
+      data.vendorsFilter,
+    );
   }
 
   @Post('many')
@@ -27,13 +45,7 @@ export class VendorController {
     return await this.vendorService.getAllHints();
   }
 
-  @Get('by-query')
-  async getVendorsByQuery(@Query() data: { name: string; field: string }) {
-    const { name, field } = data;
-    return await this.vendorService.getVendorsBySearchQuery(name, field);
-  }
-
-  @Get('by-multiple/')
+  @Get('by-multiple')
   async getVendorsByMultiple(
     @Query() data: { options: string[]; field: string },
   ) {
@@ -47,10 +59,18 @@ export class VendorController {
     data: {
       field: keyof VendorDto;
       vendorsFilter: { filter: keyof VendorDto; value: string } | undefined;
+      page: number;
+      vendorsPerPage: number;
       order: 'asc' | 'desc';
     },
   ) {
-    const { field, vendorsFilter, order } = data;
-    return await this.vendorService.sortVendors(field, vendorsFilter, order);
+    const { field, vendorsFilter, order, page, vendorsPerPage } = data;
+    return await this.vendorService.sortVendors(
+      field,
+      vendorsFilter,
+      vendorsPerPage,
+      page,
+      order,
+    );
   }
 }
