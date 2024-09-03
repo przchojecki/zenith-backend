@@ -158,6 +158,16 @@ export class VendorService {
     }
   }
 
+  async deleteAllVendors({ secret }: { secret: string }) {
+    try {
+      if (secret !== 'deletion_key') return;
+      console.log('Deleting all vendors');
+      await this.vendorModel.deleteMany({});
+    } catch (err) {
+      console.log('Error', err);
+    }
+  }
+
   async sortVendors(
     field: keyof VendorDto,
     vendorsFilter: { filter: string; value: string | string[] },

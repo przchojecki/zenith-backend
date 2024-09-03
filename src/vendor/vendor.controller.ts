@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Post, Query } from '@nestjs/common';
 import { VendorService } from './vendor.service';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { VendorDto } from './types/vendor';
@@ -33,6 +33,11 @@ export class VendorController {
       data.vendorsPerPage,
       data.vendorsFilter,
     );
+  }
+
+  @Delete('all')
+  async deleteAllVendors(@Query() query: { secret: string }) {
+    return await this.vendorService.deleteAllVendors({ secret: query.secret });
   }
 
   @Post('many')
